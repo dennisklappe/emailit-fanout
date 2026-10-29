@@ -4,6 +4,7 @@
   "compatibility_date": "2026-10-29",
   "workers_dev": true,
   "keep_vars": true,
+  "observability": { "enabled": true },
   "queues": {
     "producers": [{ "binding": "DELIVERIES", "queue": "emailit-fanout-deliveries" }],
     "consumers": [

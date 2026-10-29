@@ -88,6 +88,7 @@ export default {
       console.error(`enqueue failed: ${err}`);
       return new Response("Could not queue deliveries", { status: 503 });
     }
+    console.log(JSON.stringify({ msg: "queued", events: events.map((e) => ({ id: e.event_id, type: e.type })), jobs: jobs.map((j) => j.destination) }));
     return Response.json({ received: events.length, jobs: jobs.length, durable: true });
   },
 
@@ -108,7 +109,7 @@ export default {
           console.error(`[${msg.body.destination}] gone or disabled, dropping ${msg.body.events.length} event(s)`);
           return msg.ack();
         }
-        const outcome = await attempt(dest, msg.body.events);
+        const outcome = await attempt(dest, msg.body.events, msg.attempts);
         if (outcome === "retry") msg.retry({ delaySeconds: backoff(msg.attempts) });
         else msg.ack();
       }),

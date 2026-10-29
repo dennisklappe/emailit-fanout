@@ -221,3 +221,16 @@ describe("hardening", () => {
     expect(b.ack).toHaveBeenCalled();
   });
 });
+
+describe("logging", () => {
+  it("logs one JSON line per delivery attempt and per queued request", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("ok")));
+    await attempt({ name: "d", url: "https://d.test" }, [{ event_id: "e1", type: "email.sent" }], 2);
+    expect(JSON.parse(log.mock.calls[0][0])).toEqual({ msg: "delivery", destination: "d", outcome: "ok", attempt: 2, detail: 200, events: [{ id: "e1", type: "email.sent" }] });
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
+    await worker.fetch(new Request("https://w.test", { method: "POST", body: JSON.stringify([ev("email.sent", "a@x.com", "b@y.com")]) }), { ALLOW_UNSIGNED: "true", DESTINATIONS: '[{"name":"d","url":"https://d.test"}]', DELIVERIES: { sendBatch } } as never, { waitUntil() {} } as never);
+    expect(JSON.parse(log.mock.calls[1][0])).toMatchObject({ msg: "queued", jobs: ["d"] });
+    log.mockRestore();
+  });
+});
