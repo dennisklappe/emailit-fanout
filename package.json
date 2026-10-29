@@ -4,10 +4,16 @@
   "private": true,
   "description": "Cloudflare Worker that fans one Emailit webhook out to many destinations with filters",
   "license": "MIT",
+  "cloudflare": {
+    "bindings": {
+      "EMAILIT_SIGNING_SECRET": { "description": "Signing secret of your Emailit webhook (whsec_...). Leave empty for now and set it after you create the webhook in Emailit." },
+      "DESTINATIONS": { "description": "JSON array of destinations, see the README. Start with [{\"name\":\"test\",\"url\":\"https://example.com/hook\"}]." }
+    }
+  },
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "deploy": "wrangler queues create emailit-fanout-dead || true; wrangler deploy",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

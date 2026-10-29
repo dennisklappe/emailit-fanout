@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { deliver } from "../src/deliver";
+import { attempt, deliver } from "../src/deliver";
 import { shouldDeliver } from "../src/filter";
-import worker, { parseDestinations } from "../src/index";
+import worker, { backoff, chunk, parseDestinations, sendGroups } from "../src/index";
 import { sign, verifyEmailit } from "../src/verify";
 
 const SECRET = "whsec_4f2a9c1e7b3d5a8f0e6c2b9d4a7f1e3c5b8d0a2f6e9c3b7d1a5f8e2c4b6d9a0f";
@@ -128,5 +128,96 @@ describe("worker", () => {
 
   it("400 on invalid config", async () => {
     expect((await run("[]", {}, { DESTINATIONS: "nope", ALLOW_UNSIGNED: "true" })).status).toBe(400);
+  });
+});
+
+describe("durable queue", () => {
+  const dests = JSON.stringify([
+    { name: "bounces", url: "https://bounce.test", filter: { types: ["email.bounced"] } },
+    { name: "all", url: "https://all.test" },
+  ]);
+  const post = (env: object, body: string) =>
+    worker.fetch(new Request("https://w.test", { method: "POST", body }), { ALLOW_UNSIGNED: "true", DESTINATIONS: dests, ...env } as never, { waitUntil() {} } as never);
+
+  it("enqueues one job per matching destination before answering 200, and does not fetch", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
+    const body = JSON.stringify([ev("email.bounced", "a@x.com", "b@y.com"), ev("email.delivered", "a@x.com", "b@y.com")]);
+    const res = await post({ DELIVERIES: { sendBatch } }, body);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ jobs: 2, durable: true });
+    const jobs = sendBatch.mock.calls[0][0].map((m: { body: { destination: string; events: unknown[] } }) => [m.body.destination, m.body.events.length]);
+    expect(jobs).toEqual([["bounces", 1], ["all", 2]]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("answers 503 when the queue is unavailable so Emailit retries", async () => {
+    const sendBatch = vi.fn().mockRejectedValue(new Error("down"));
+    expect((await post({ DELIVERIES: { sendBatch } }, JSON.stringify([ev("email.sent", "a@x.com", "b@y.com")]))).status).toBe(503);
+  });
+
+  const msg = (destination: string, attempts = 1) => ({ body: { destination, events: [{}] }, attempts, ack: vi.fn(), retry: vi.fn() });
+  const consume = (messages: ReturnType<typeof msg>[], env: object = { DESTINATIONS: dests }) =>
+    worker.queue({ messages, retryAll: vi.fn() } as never, env as never);
+
+  it("acks on success, retries with backoff on 5xx, drops on 4xx, acks unknown destinations", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => new Response("", { status: url.includes("all") ? 200 : url.includes("bounce") ? 503 : 400 })));
+    const [ok, bad, gone] = [msg("all"), msg("bounces", 3), msg("deleted")];
+    await consume([ok, bad, gone]);
+    expect(ok.ack).toHaveBeenCalled();
+    expect(bad.retry).toHaveBeenCalledWith({ delaySeconds: 120 });
+    expect(bad.ack).not.toHaveBeenCalled();
+    expect(gone.ack).toHaveBeenCalled();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("", { status: 400 })));
+    const rejected = msg("all");
+    await consume([rejected]);
+    expect(rejected.ack).toHaveBeenCalled();
+  });
+
+  it("backoff grows and caps, chunk splits by size", () => {
+    expect([1, 2, 3, 20].map(backoff)).toEqual([30, 60, 120, 3600]);
+    expect(chunk([{ a: "x".repeat(60) }, { a: "x".repeat(60) }, { a: "x".repeat(60) }], 100).map((c) => c.length)).toEqual([1, 1, 1]);
+    expect(chunk([{}, {}, {}]).map((c) => c.length)).toEqual([3]);
+  });
+});
+
+describe("hardening", () => {
+  it("single format posts one bare object per event, and one job per event", async () => {
+    const m = vi.fn().mockResolvedValue(new Response("ok"));
+    vi.stubGlobal("fetch", m);
+    expect(await deliver({ name: "b", url: "https://b.test", format: "single" }, [{ event_id: "e1", type: "email.clicked" }])).toBe(true);
+    expect(JSON.parse(m.mock.calls[0][1].body)).toEqual({ event_id: "e1", type: "email.clicked" });
+    const sendBatch = vi.fn().mockResolvedValue(undefined);
+    const dests = JSON.stringify([{ name: "b", url: "https://b.test", format: "single" }]);
+    const body = JSON.stringify([ev("email.sent", "a@x.com", "b@y.com"), ev("email.loaded", "a@x.com", "b@y.com")]);
+    await worker.fetch(new Request("https://w.test", { method: "POST", body }), { ALLOW_UNSIGNED: "true", DESTINATIONS: dests, DELIVERIES: { sendBatch } } as never, { waitUntil() {} } as never);
+    expect(sendBatch.mock.calls[0][0].map((x: { body: { events: unknown[] } }) => x.body.events.length)).toEqual([1, 1]);
+    expect(() => parseDestinations('[{"name":"a","url":"https://x.com","format":"xml"}]')).toThrow();
+  });
+
+  it("retries 401, 403 and 404, drops other 4xx", async () => {
+    for (const [status, expected] of [[401, "retry"], [403, "retry"], [404, "retry"], [400, "drop"], [410, "drop"]] as const) {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("", { status })));
+      expect(await attempt({ name: "d", url: "https://d.test" }, [{}])).toBe(expected);
+    }
+  });
+
+  it("measures bytes, drops oversized events and splits sendBatch by size and count", () => {
+    expect(chunk([{ a: "\u20ac".repeat(40) }, { a: "\u20ac".repeat(40) }], 200).map((c) => c.length)).toEqual([1, 1]);
+    expect(chunk([{ a: "x".repeat(500) }, { a: "y" }], 100)).toEqual([[{ a: "y" }]]);
+    const job = (n: number) => ({ destination: "d", events: [{ a: "x".repeat(n) }] });
+    expect(sendGroups([job(100), job(100), job(100)], 400).map((g) => g.length)).toEqual([2, 1]);
+    expect(sendGroups(Array.from({ length: 250 }, () => job(1))).map((g) => g.length)).toEqual([100, 100, 50]);
+  });
+
+  it("one failing job does not stop the others in a queue batch", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => (url.includes("bad") ? Promise.reject(new Error("x")) : new Response("ok"))));
+    const dests = JSON.stringify([{ name: "bad", url: "https://bad.test" }, { name: "good", url: "https://good.test" }]);
+    const mk = (destination: string) => ({ body: { destination, events: [{}] }, attempts: 1, ack: vi.fn(), retry: vi.fn() });
+    const [a, b] = [mk("bad"), mk("good")];
+    await worker.queue({ messages: [a, b], retryAll: vi.fn() } as never, { DESTINATIONS: dests } as never);
+    expect(a.retry).toHaveBeenCalled();
+    expect(b.ack).toHaveBeenCalled();
   });
 });

@@ -1,4 +1,12 @@
+/** One queued delivery: the events of one webhook request that matched one destination. */
+export interface Job {
+  destination: string;
+  events: EmailitEvent[];
+}
+
 export interface Env {
+  /** Queue that makes delivery durable. Without it, delivery is best effort in the background. */
+  DELIVERIES?: Queue<Job>;
   /** Emailit webhook secret (whsec_...). Incoming requests are verified with it. */
   EMAILIT_SIGNING_SECRET?: string;
   /** Set to "true" to accept unsigned requests (not recommended). */
@@ -29,6 +37,8 @@ export interface Destination {
   filter?: Filter;
   /** Event must NOT match this filter. */
   exclude?: Filter;
+  /** "batch" (default) sends Emailit's JSON array. "single" sends one bare event object per request. */
+  format?: "batch" | "single";
   disabled?: boolean;
 }
 

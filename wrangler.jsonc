@@ -1,7 +1,19 @@
 {
   "name": "emailit-fanout",
   "main": "src/index.ts",
-  "compatibility_date": "2025-01-01",
+  "compatibility_date": "2026-10-29",
   "workers_dev": true,
-  "keep_vars": true
+  "keep_vars": true,
+  "queues": {
+    "producers": [{ "binding": "DELIVERIES", "queue": "emailit-fanout-deliveries" }],
+    "consumers": [
+      {
+        "queue": "emailit-fanout-deliveries",
+        "max_batch_size": 10,
+        "max_batch_timeout": 1,
+        "max_retries": 12,
+        "dead_letter_queue": "emailit-fanout-dead"
+      }
+    ]
+  }
 }
