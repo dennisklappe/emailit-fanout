@@ -1,0 +1,20 @@
+{
+  "name": "emailit-fanout",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cloudflare Worker that fans one Emailit webhook out to many destinations with filters",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261023.1",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0",
+    "wrangler": "^4.0.0"
+  }
+}
