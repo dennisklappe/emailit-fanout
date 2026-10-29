@@ -1,4 +1,4 @@
-# Signing secret of your Emailit webhook (whsec_...). Leave empty to skip verification (not recommended).
+# Signing secret of your Emailit webhook (whsec_...). Required: the Worker answers 503 while this is empty (set ALLOW_UNSIGNED=true to skip verification, not recommended).
 EMAILIT_SIGNING_SECRET=
 # JSON array of destinations, see README.
 DESTINATIONS=[{"name":"everything","url":"https://example.com/hook"}]
