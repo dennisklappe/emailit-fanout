@@ -26,7 +26,7 @@ Change destinations any time by editing `DESTINATIONS` there. No redeploy needed
     "url": "https://bridge.example.com/hook",
     "headers": { "Authorization": "Bearer abc" },
     "secret": "whsec_for_this_destination",
-    "filter": { "types": ["email.bounced", "email.complained"], "domains": ["shop.example.com"] }
+    "filter": { "types": ["email.bounced", "email.failed"], "domains": ["shop.example.com"] }
   },
   {
     "name": "crm-no-opens",
@@ -50,9 +50,11 @@ Change destinations any time by editing `DESTINATIONS` there. No redeploy needed
 Filter keys (each a list, `*` is a wildcard, case-insensitive, any value in the list can match):
 
 - `types`: event type, e.g. `email.bounced`, `email.*`, `domain.*`
-- `domains`: sending domain (taken from the `from` address)
+- `domains`: sending domain (taken from the sender: `from` on delivery events, `email.mail_from` on opens and clicks)
 - `from`: sender address, e.g. `*@shop.example.com`
 - `to`: recipient address, e.g. `*@customer.com`
+
+Note: `email.complained` events carry no sender, so `domains` and `from` never match them. Use a separate destination with only `types` for complaints.
 
 By default destinations get a JSON array with only the events that matched, in Emailit's original format (see `format` for one event per request).
 
