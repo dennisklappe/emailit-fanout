@@ -24,12 +24,14 @@ function asList(value: unknown): string[] {
 
 export function describeEvent(event: EmailitEvent) {
   const obj = event.object ?? event.data?.object ?? {};
-  const from = asList(obj.from);
+  // Delivery events carry from/to on the object. Opens and clicks nest the mail under object.email as mail_from/rcpt_to.
+  const mail = (obj.email && typeof obj.email === "object" ? obj.email : {}) as Record<string, unknown>;
+  const from = [...asList(obj.from), ...asList(mail.mail_from), ...asList(mail.from)];
   return {
     type: typeof event.type === "string" ? event.type : "",
     from,
     domains: from.map((f) => f.split("@")[1] ?? "").filter(Boolean),
-    to: asList(obj.to),
+    to: [...asList(obj.to), ...asList(mail.rcpt_to), ...asList(mail.to)],
   };
 }
 

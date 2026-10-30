@@ -234,3 +234,13 @@ describe("logging", () => {
     log.mockRestore();
   });
 });
+
+describe("event shapes", () => {
+  it("reads sender and recipient of opens and clicks from object.email", () => {
+    const loaded = { type: "email.loaded", object: { email: { mail_from: "Shop <hi@shop.example.com>", rcpt_to: "a@customer.nl" } } };
+    const f = (filter: object) => shouldDeliver({ name: "x", url: "u", filter }, loaded);
+    expect(f({ domains: ["shop.example.com"] })).toBe(true);
+    expect(f({ from: ["*@shop.example.com"], to: ["*@customer.nl"] })).toBe(true);
+    expect(f({ domains: ["other.com"] })).toBe(false);
+  });
+});
